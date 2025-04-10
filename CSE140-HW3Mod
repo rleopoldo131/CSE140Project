@@ -97,8 +97,14 @@ void Decode() {
         }
     }
 
-    // Temporary simple control logic
-    RegWrite = 0; MemRead = 0; MemWrite = 0; Branch = 0; ALUSrc = 0; MemToReg = 0; ALUOp = 0;
+    // Temporary simple control logic 
+    RegWrite = 0; 
+    MemRead = 0; 
+    MemWrite = 0; 
+    Branch = 0; 
+    ALUSrc = 0; 
+    MemToReg = 0; 
+    ALUOp = 0;
     
     if (opcode == 0b0110011) { // R-type (add, sub, and, or)
         RegWrite = 1;
