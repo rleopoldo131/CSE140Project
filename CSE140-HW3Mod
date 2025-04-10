@@ -3,14 +3,14 @@
 #include <string.h>
 #include <math.h>
 
-#define MAX_INSTRUCTIONS 100
+#define max 100
 
 // Global variables
 int pc = 0;
 int next_pc = 4;
 int branch_target = 0;
 int total_clock_cycles = 0;
-char instruction_memory[MAX_INSTRUCTIONS][33];
+char instruction_memory[max][33];
 int instruction_count = 0;
 char current_instruction[33];
 
