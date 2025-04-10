@@ -17,11 +17,17 @@ char current_instruction[33];
 int rf[32] = {0}; // Register file
 int d_mem[32] = {0}; // Data memory
 
-// Placeholder control signals
+// Control signals
 int RegWrite = 0, Branch = 0, MemRead = 0, MemWrite = 0;
 int ALUSrc = 0, MemToReg = 0, ALUOp = 0;
 int alu_zero = 0;
 int branch_target = 0;
+
+// ALU and data path variables
+int alu_result = 0;
+int rd, rs1, rs2, imm;
+int val1, val2;
+int mem_data = 0;
 
 // Utility: binary substring to decimal
 int bin_to_dec(char *bin, int start, int len, int sign_extend) {
@@ -39,47 +45,66 @@ int bin_to_dec(char *bin, int start, int len, int sign_extend) {
 void Fetch() {
     strcpy(current_instruction, instruction_memory[pc / 4]);
     next_pc = pc + 4;
-    pc = next_pc; // Placeholder logic (will update for branches later)
+    pc = next_pc; // Later will be conditional on branch
 }
 
 void Decode() {
     char *inst = current_instruction;
     int opcode = bin_to_dec(inst, 25, 7, 0);
-    int rd = bin_to_dec(inst, 20, 5, 0);
+    rd = bin_to_dec(inst, 20, 5, 0);
     int funct3 = bin_to_dec(inst, 17, 3, 0);
-    int rs1 = bin_to_dec(inst, 12, 5, 0);
-    int rs2 = bin_to_dec(inst, 7, 5, 0);
+    rs1 = bin_to_dec(inst, 12, 5, 0);
+    rs2 = bin_to_dec(inst, 7, 5, 0);
     int funct7 = bin_to_dec(inst, 0, 7, 0);
 
-    printf("Decoded: opcode=%d rd=x%d rs1=x%d rs2=x%d funct3=%d funct7=%d\n",
-           opcode, rd, rs1, rs2, funct3, funct7);
+    val1 = rf[rs1];
+    val2 = rf[rs2];
 
-    // Placeholder register file access
-    int val1 = rf[rs1];
-    int val2 = rf[rs2];
-    printf("Register values: x%d=%d x%d=%d\n", rs1, val1, rs2, val2);
+    // Immediate for I-type (like addi, lw)
+    imm = bin_to_dec(inst, 0, 12, 1);
 
-    // Placeholder ControlUnit call
-    RegWrite = 1;
-    ALUSrc = 0;
-    ALUOp = 2;
+    printf("Decoded: opcode=%d rd=x%d rs1=x%d rs2=x%d imm=%d funct3=%d funct7=%d\n",
+           opcode, rd, rs1, rs2, imm, funct3, funct7);
+
+    // Basic control signal logic for demo purposes (assumes add/addi/lw/sw only)
+    if (opcode == 51) { // R-type (e.g., add)
+        ALUSrc = 0; RegWrite = 1; ALUOp = 2;
+    } else if (opcode == 19 || opcode == 3) { // I-type (addi, lw)
+        ALUSrc = 1; RegWrite = 1; ALUOp = 2;
+        MemRead = (opcode == 3);
+        MemToReg = (opcode == 3);
+    } else if (opcode == 35) { // S-type (sw)
+        ALUSrc = 1; MemWrite = 1; ALUOp = 2;
+    }
 }
 
 void Execute() {
-    // Placeholder: perform ADD if ALUOp = 2
-    int result = rf[1] + rf[2];
-    alu_zero = (result == 0);
-    printf("Execute: result=%d alu_zero=%d\n", result, alu_zero);
+    int operand2 = ALUSrc ? imm : val2;
+    alu_result = val1 + operand2; // Only add for now
+    alu_zero = (alu_result == 0);
+    printf("Execute: ALU result=%d (val1=%d operand2=%d)\n", alu_result, val1, operand2);
+
+    if (Branch && alu_zero) {
+        pc = branch_target;
+    }
 }
 
 void Mem() {
-    // Placeholder - no memory access in current test
+    if (MemRead) {
+        mem_data = d_mem[(alu_result >> 2) & 0x1F];
+        printf("Memory read: address=0x%x data=%d\n", alu_result, mem_data);
+    }
+    if (MemWrite) {
+        d_mem[(alu_result >> 2) & 0x1F] = rf[rs2];
+        printf("Memory write: address=0x%x data=%d\n", alu_result, rf[rs2]);
+    }
 }
 
 void WriteBack() {
     if (RegWrite) {
-        rf[3] = 16; // hardcoded for demo
-        printf("WriteBack: x3 is modified to 0x%x\n", rf[3]);
+        int write_val = MemToReg ? mem_data : alu_result;
+        if (rd != 0) rf[rd] = write_val;
+        printf("WriteBack: x%d is modified to 0x%x\n", rd, write_val);
     }
     total_clock_cycles++;
     printf("total_clock_cycles %d :\n", total_clock_cycles);
@@ -100,11 +125,12 @@ void load_instructions(const char *filename) {
 }
 
 int main() {
-    // Initialize registers for part 1
     rf[1] = 0x20;
     rf[2] = 0x5;
     rf[10] = 0x70;
     rf[11] = 0x4;
+    d_mem[28] = 0x5;
+    d_mem[29] = 0x10;
 
     load_instructions("Project Part 1.txt");
 
