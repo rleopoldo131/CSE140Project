@@ -10,11 +10,25 @@ int pc = 0;
 int next_pc = 4;
 int branch_target = 0;
 int total_clock_cycles = 0;
-char instruction_memory[MAX_INSTRUCTIONS][33]; // Store the 32-bit instructions
+char instruction_memory[MAX_INSTRUCTIONS][33];
 int instruction_count = 0;
+char current_instruction[33];
 
 int rf[32] = {0}; // Register file
 int d_mem[32] = {0}; // Data memory
+
+// Control signals
+int RegWrite = 0, Branch = 0, MemRead = 0, MemWrite = 0;
+int ALUSrc = 0, MemToReg = 0;
+int ALUOp = 0;
+int alu_zero = 0;
+int alu_ctrl = 0;
+
+// ALU and data path variables
+int alu_result = 0;
+int rd, rs1, rs2, imm;
+int val1, val2;
+int mem_data = 0;
 
 // Register names for clearer output
 const char* reg_names[32] = {
@@ -28,14 +42,216 @@ const char* reg_names[32] = {
 int bin_to_dec(const char *bin, int start, int len, int sign_extend) {
     int val = 0;
     for (int i = 0; i < len; i++) {
-        val = (val << 1) | (bin[start + i] - '0');
+        val <<= 1;
+        val |= (bin[start + i] - '0');
     }
-    
-    // Sign extension if needed
     if (sign_extend && bin[start] == '1') {
+        // Sign extension
         val |= ((-1) << len);
     }
     return val;
+}
+
+// Fetch the instruction from memory
+void Fetch() {
+    if (pc / 4 < instruction_count) {
+        strcpy(current_instruction, instruction_memory[pc / 4]);
+        next_pc = pc + 4;
+    }
+}
+
+// Decode the instruction
+void Decode() {
+    char *inst = current_instruction;
+    int opcode = bin_to_dec(inst, 25, 7, 0);
+    rd = bin_to_dec(inst, 20, 5, 0);
+    int funct3 = bin_to_dec(inst, 17, 3, 0);
+    rs1 = bin_to_dec(inst, 12, 5, 0);
+    rs2 = bin_to_dec(inst, 7, 5, 0);
+    int funct7 = bin_to_dec(inst, 0, 7, 0);
+
+    val1 = rf[rs1];
+    val2 = rf[rs2];
+
+    // I-type immediate (addi, lw)
+    if (opcode == 0b0010011 || opcode == 0b0000011) { // addi, lw
+        imm = bin_to_dec(inst, 0, 12, 1);
+    }
+    // S-type immediate (sw)
+    else if (opcode == 0b0100011) { // sw
+        imm = (bin_to_dec(inst, 0, 7, 0) << 5) | bin_to_dec(inst, 20, 5, 0);
+        // Sign extend
+        if ((imm >> 11) & 1) {
+            imm |= (~0 << 12);
+        }
+    }
+    // B-type immediate (beq)
+    else if (opcode == 0b1100011) { // beq
+        imm = (bin_to_dec(inst, 0, 1, 0) << 12) | 
+              (bin_to_dec(inst, 1, 6, 0) << 5) | 
+              (bin_to_dec(inst, 20, 4, 0) << 1) | 
+              (bin_to_dec(inst, 24, 1, 0) << 11);
+        // Sign extend
+        if ((imm >> 12) & 1) {
+            imm |= (~0 << 13);
+        }
+    }
+
+    // Temporary simple control logic
+    RegWrite = 0; MemRead = 0; MemWrite = 0; Branch = 0; ALUSrc = 0; MemToReg = 0; ALUOp = 0;
+    
+    if (opcode == 0b0110011) { // R-type (add, sub, and, or)
+        RegWrite = 1;
+        ALUSrc = 0;
+        ALUOp = 2;
+        
+        // Set ALU control based on funct3 and funct7
+        if (funct3 == 0 && funct7 == 0) { // add
+            alu_ctrl = 2; // ADD
+        } else if (funct3 == 0 && funct7 == 32) { // sub
+            alu_ctrl = 6; // SUB
+        } else if (funct3 == 7) { // and
+            alu_ctrl = 0; // AND
+        } else if (funct3 == 6) { // or
+            alu_ctrl = 1; // OR
+        }
+    } 
+    else if (opcode == 0b0010011) { // I-type (addi, andi, ori)
+        RegWrite = 1;
+        ALUSrc = 1;
+        
+        if (funct3 == 0) { // addi
+            alu_ctrl = 2; // ADD
+        } else if (funct3 == 7) { // andi
+            alu_ctrl = 0; // AND
+        } else if (funct3 == 6) { // ori
+            alu_ctrl = 1; // OR
+        }
+    }
+    else if (opcode == 0b0000011) { // lw
+        MemRead = 1;
+        RegWrite = 1;
+        ALUSrc = 1;
+        MemToReg = 1;
+        alu_ctrl = 2; // ADD for address calculation
+    }
+    else if (opcode == 0b0100011) { // sw
+        MemWrite = 1;
+        ALUSrc = 1;
+        alu_ctrl = 2; // ADD for address calculation
+    }
+    else if (opcode == 0b1100011) { // beq
+        Branch = 1;
+        ALUSrc = 0;
+        alu_ctrl = 6; // SUB for comparison
+    }
+}
+
+// Execute the ALU operation
+void Execute() {
+    int operand2 = ALUSrc ? imm : val2;
+    
+    // ALU operations based on alu_ctrl
+    switch(alu_ctrl) {
+        case 0: // AND
+            alu_result = val1 & operand2;
+            break;
+        case 1: // OR
+            alu_result = val1 | operand2;
+            break;
+        case 2: // ADD
+            alu_result = val1 + operand2;
+            break;
+        case 6: // SUB
+            alu_result = val1 - operand2;
+            break;
+        default:
+            alu_result = 0;
+            break;
+    }
+    
+    alu_zero = (alu_result == 0);
+    
+    // Calculate branch target
+    branch_target = pc + imm; // For B-type instruction
+}
+
+// Memory access
+void Mem() {
+    if (MemRead) {
+        int mem_addr = (alu_result >> 2) & 0x1F; // Convert byte address to word address (32-bit words)
+        mem_data = d_mem[mem_addr];
+    }
+    
+    if (MemWrite) {
+        int mem_addr = (alu_result >> 2) & 0x1F; // Convert byte address to word address
+        d_mem[mem_addr] = val2; // Write rs2 to memory
+    }
+}
+
+// Write back to register file
+void WriteBack() {
+    if (RegWrite && rd != 0) { // x0 is hardwired to 0
+        rf[rd] = MemToReg ? mem_data : alu_result;
+    }
+}
+
+// Update the program counter
+void UpdatePC() {
+    // Update PC based on branch control and zero flag
+    if (Branch && alu_zero) {
+        pc = branch_target;
+    } else {
+        pc = next_pc;
+    }
+}
+
+// Print state changes for the current cycle
+void PrintCycleResults(int old_rf[32], int old_d_mem[32], int old_pc) {
+    // Print cycle number
+    printf("total_clock_cycles %d :\n", total_clock_cycles);
+    
+    // Print register changes
+    for (int i = 0; i < 32; i++) {
+        if (rf[i] != old_rf[i]) {
+            printf("%s is modified to 0x%x\n", reg_names[i], rf[i]);
+        }
+    }
+    
+    // Print memory changes
+    for (int i = 0; i < 32; i++) {
+        if (d_mem[i] != old_d_mem[i]) {
+            printf("memory 0x%x is modified to 0x%x\n", i * 4, d_mem[i]);
+        }
+    }
+    
+    printf("pc is modified to 0x%x\n\n", pc);
+}
+
+// Execute one complete instruction cycle
+void ExecuteOneCycle() {
+    // Save the old state to track changes
+    int old_rf[32];
+    memcpy(old_rf, rf, sizeof(rf));
+    
+    int old_d_mem[32];
+    memcpy(old_d_mem, d_mem, sizeof(d_mem));
+    
+    int old_pc = pc;
+    
+    // Execute all pipeline stages for this instruction
+    Fetch();
+    Decode();
+    Execute();
+    Mem();
+    WriteBack();
+    UpdatePC();
+    
+    // Increment cycle counter after completing a full instruction
+    total_clock_cycles++;
+    
+    // Print results for this cycle
+    PrintCycleResults(old_rf, old_d_mem, old_pc);
 }
 
 // Load instructions from a file
@@ -55,132 +271,33 @@ void load_instructions(const char *filename) {
         if (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r'))
             line[--len] = '\0';
         
-        if (len == 32) { // Valid 32-bit instruction
-            strcpy(instruction_memory[instruction_count++], line);
+        if (len >= 32) { // Valid 32-bit instruction (may have extra chars)
+            // Copy only the 32 bits we need
+            strncpy(instruction_memory[instruction_count], line, 32);
+            instruction_memory[instruction_count][32] = '\0';
+            instruction_count++;
         }
     }
-    
     fclose(file);
 }
 
 // Initialize memory and registers
 void initialize_memory() {
-    // Reset all registers and memory
-    memset(rf, 0, sizeof(rf));
-    memset(d_mem, 0, sizeof(d_mem));
-    
-    // Initialize registers as per project specification
-    rf[1] = 0x20;  // x1 (ra)
-    rf[2] = 0x5;   // x2 (sp)
-    rf[10] = 0x70; // x10 (a0)
-    rf[11] = 0x4;  // x11 (a1)
-    
-    d_mem[28] = 0x5;  // Memory at 0x70 (word address 28)
-    d_mem[29] = 0x10; // Memory at 0x74 (word address 29)
-}
-
-// Process one instruction
-void process_instruction(int instr_index) {
-    // Increment cycle counter
-    total_clock_cycles++;
-    
-    // Get the instruction
-    char *inst = instruction_memory[instr_index];
-    
-    // Save old register and memory values to track changes
-    int old_rf[32];
-    memcpy(old_rf, rf, sizeof(rf));
-    
-    int old_mem[32];
-    memcpy(old_mem, d_mem, sizeof(d_mem));
-    
-    // Extract instruction fields
-    int opcode = bin_to_dec(inst, 25, 7, 0);
-    int rd = bin_to_dec(inst, 20, 5, 0);
-    int funct3 = bin_to_dec(inst, 17, 3, 0);
-    int rs1 = bin_to_dec(inst, 12, 5, 0);
-    int rs2 = bin_to_dec(inst, 7, 5, 0);
-    int funct7 = bin_to_dec(inst, 0, 7, 0);
-    
-    // Calculate immediates based on instruction type
-    int imm = 0;
-    
-    // R-type: add, sub, and, or
-    if (opcode == 0b0110011) {
-        if (funct3 == 0 && funct7 == 0) {          // add
-            rf[rd] = rf[rs1] + rf[rs2];
-        } else if (funct3 == 0 && funct7 == 32) {  // sub
-            rf[rd] = rf[rs1] - rf[rs2];
-        } else if (funct3 == 7) {                  // and
-            rf[rd] = rf[rs1] & rf[rs2];
-        } else if (funct3 == 6) {                  // or
-            rf[rd] = rf[rs1] | rf[rs2];
-        }
-    }
-    // I-type: addi, lw
-    else if (opcode == 0b0010011 || opcode == 0b0000011) {
-        imm = bin_to_dec(inst, 0, 12, 1);
-        
-        if (opcode == 0b0010011) { // addi, andi, ori
-            if (funct3 == 0) {          // addi
-                rf[rd] = rf[rs1] + imm;
-            } else if (funct3 == 7) {   // andi
-                rf[rd] = rf[rs1] & imm;
-            } else if (funct3 == 6) {   // ori
-                rf[rd] = rf[rs1] | imm;
-            }
-        } else { // lw
-            int addr = (rf[rs1] + imm) >> 2;  // Convert byte address to word address
-            rf[rd] = d_mem[addr & 0x1F];      // Mask to get word within memory range
-        }
-    }
-    // S-type: sw
-    else if (opcode == 0b0100011) {
-        imm = (bin_to_dec(inst, 0, 7, 0) << 5) | bin_to_dec(inst, 20, 5, 0);
-        if ((imm >> 11) & 1) { // Sign extend
-            imm |= (~0U << 12);
-        }
-        
-        int addr = (rf[rs1] + imm) >> 2;  // Convert byte address to word address
-        d_mem[addr & 0x1F] = rf[rs2];     // Mask to get word within memory range
-    }
-    // B-type: beq
-    else if (opcode == 0b1100011) {
-        imm = (bin_to_dec(inst, 0, 1, 0) << 12) |
-              (bin_to_dec(inst, 1, 6, 0) << 5) |
-              (bin_to_dec(inst, 20, 4, 0) << 1) |
-              (bin_to_dec(inst, 24, 1, 0) << 11);
-        
-        if ((imm >> 12) & 1) { // Sign extend
-            imm |= (~0U << 13);
-        }
-        
-        if (rf[rs1] == rf[rs2]) {
-            pc = pc + imm - 4;  // Adjust for the pc increment that follows
-        }
-    }
-    
-    // Update PC for next instruction
-    pc += 4;
-    
-    // Print cycle results
-    printf("total_clock_cycles %d :\n", total_clock_cycles);
-    
-    // Print register changes
+    // Initialize all registers and memory to zero
     for (int i = 0; i < 32; i++) {
-        if (rf[i] != old_rf[i]) {
-            printf("%s is modified to 0x%x\n", reg_names[i], rf[i]);
-        }
+        rf[i] = 0;
+        d_mem[i] = 0;
     }
     
-    // Print memory changes
-    for (int i = 0; i < 32; i++) {
-        if (d_mem[i] != old_mem[i]) {
-            printf("memory 0x%x is modified to 0x%x\n", i * 4, d_mem[i]);
-        }
-    }
+    // Initialize registers as per project specification for Part 1
+    rf[1] = 0x20;  // x1
+    rf[2] = 0x5;   // x2
+    rf[10] = 0x70; // x10
+    rf[11] = 0x4;  // x11
     
-    printf("pc is modified to 0x%x\n\n", pc);
+    // Initialize memory as per project specification
+    d_mem[28] = 0x5;  // 0x70 / 4 = 28
+    d_mem[29] = 0x10; // 0x74 / 4 = 29
 }
 
 // Main function
@@ -201,9 +318,9 @@ int main() {
     pc = 0;
     total_clock_cycles = 0;
     
-    // Process each instruction
+    // Main execution loop - execute one complete instruction per cycle
     while (pc / 4 < instruction_count) {
-        process_instruction(pc / 4);
+        ExecuteOneCycle();
     }
     
     printf("program terminated:\n");
