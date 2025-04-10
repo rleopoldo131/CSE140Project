@@ -1,0 +1,121 @@
+// Modified HW3 code to start CSE 140 Project - Single-Cycle RISC-V CPU
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+#define MAX_INSTRUCTIONS 100
+
+// Global variables
+int pc = 0;
+int next_pc = 4;
+int total_clock_cycles = 0;
+char instruction_memory[MAX_INSTRUCTIONS][33];
+int instruction_count = 0;
+char current_instruction[33];
+
+int rf[32] = {0}; // Register file
+int d_mem[32] = {0}; // Data memory
+
+// Placeholder control signals
+int RegWrite = 0, Branch = 0, MemRead = 0, MemWrite = 0;
+int ALUSrc = 0, MemToReg = 0, ALUOp = 0;
+int alu_zero = 0;
+int branch_target = 0;
+
+// Utility: binary substring to decimal
+int bin_to_dec(char *bin, int start, int len, int sign_extend) {
+    int val = 0;
+    for (int i = 0; i < len; i++) {
+        val <<= 1;
+        val |= (bin[start + i] - '0');
+    }
+    if (sign_extend && bin[start] == '1') {
+        val -= (1 << len);
+    }
+    return val;
+}
+
+void Fetch() {
+    strcpy(current_instruction, instruction_memory[pc / 4]);
+    next_pc = pc + 4;
+    pc = next_pc; // Placeholder logic (will update for branches later)
+}
+
+void Decode() {
+    char *inst = current_instruction;
+    int opcode = bin_to_dec(inst, 25, 7, 0);
+    int rd = bin_to_dec(inst, 20, 5, 0);
+    int funct3 = bin_to_dec(inst, 17, 3, 0);
+    int rs1 = bin_to_dec(inst, 12, 5, 0);
+    int rs2 = bin_to_dec(inst, 7, 5, 0);
+    int funct7 = bin_to_dec(inst, 0, 7, 0);
+
+    printf("Decoded: opcode=%d rd=x%d rs1=x%d rs2=x%d funct3=%d funct7=%d\n",
+           opcode, rd, rs1, rs2, funct3, funct7);
+
+    // Placeholder register file access
+    int val1 = rf[rs1];
+    int val2 = rf[rs2];
+    printf("Register values: x%d=%d x%d=%d\n", rs1, val1, rs2, val2);
+
+    // Placeholder ControlUnit call
+    RegWrite = 1;
+    ALUSrc = 0;
+    ALUOp = 2;
+}
+
+void Execute() {
+    // Placeholder: perform ADD if ALUOp = 2
+    int result = rf[1] + rf[2];
+    alu_zero = (result == 0);
+    printf("Execute: result=%d alu_zero=%d\n", result, alu_zero);
+}
+
+void Mem() {
+    // Placeholder - no memory access in current test
+}
+
+void WriteBack() {
+    if (RegWrite) {
+        rf[3] = 16; // hardcoded for demo
+        printf("WriteBack: x3 is modified to 0x%x\n", rf[3]);
+    }
+    total_clock_cycles++;
+    printf("total_clock_cycles %d :\n", total_clock_cycles);
+    printf("pc is modified to 0x%x\n\n", pc);
+}
+
+void load_instructions(const char *filename) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        perror("Failed to open instruction file");
+        exit(1);
+    }
+    while (fgets(instruction_memory[instruction_count], 33, file)) {
+        instruction_memory[instruction_count][32] = '\0';
+        instruction_count++;
+    }
+    fclose(file);
+}
+
+int main() {
+    // Initialize registers for part 1
+    rf[1] = 0x20;
+    rf[2] = 0x5;
+    rf[10] = 0x70;
+    rf[11] = 0x4;
+
+    load_instructions("Project Part 1.txt");
+
+    while (pc / 4 < instruction_count) {
+        Fetch();
+        Decode();
+        Execute();
+        Mem();
+        WriteBack();
+    }
+
+    printf("Program terminated after %d cycles.\n", total_clock_cycles);
+    return 0;
+}
