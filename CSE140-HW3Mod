@@ -52,12 +52,19 @@ int bin_to_dec(const char *bin, int start, int len, int sign_extend) {
     return val;
 }
 
+// Fetch the instruction from memory
+// This function fetches the instruction from the instruction memory
+
 void Fetch() {
     if (pc / 4 < instruction_count) {
         strcpy(current_instruction, instruction_memory[pc / 4]);
         next_pc = pc + 4;
     }
 }
+
+
+// Decode the instruction
+// This function decodes the instruction and sets control signals based off Lab 3
 
 void Decode() {
     char *inst = current_instruction;
@@ -95,7 +102,7 @@ void Decode() {
         }
     }
 
-    // Temporary simple control logic - will be replaced by ControlUnit()
+    // Temporary simple control logic - will be replaced by ControlUnit() unimplemented yet
     RegWrite = 0; MemRead = 0; MemWrite = 0; Branch = 0; ALUSrc = 0; MemToReg = 0; ALUOp = 0;
     
     if (opcode == 0b0110011) { // R-type (add, sub, and, or)
@@ -145,6 +152,9 @@ void Decode() {
     }
 }
 
+
+// Execute the ALU operation
+// This function executes the ALU operation based on the control signals and operands
 void Execute() {
     int operand2 = ALUSrc ? imm : val2;
     
@@ -173,6 +183,10 @@ void Execute() {
     branch_target = pc + (imm << 1); // For B-type instruction, left shift by 1 and add to current PC
 }
 
+
+// Memory access
+// This function handles memory read/write operations
+
 void Mem() {
     if (MemRead) {
         int mem_addr = (alu_result >> 2) & 0x1F; // Convert byte address to word address (32-bit words)
@@ -184,6 +198,10 @@ void Mem() {
         d_mem[mem_addr] = val2; // Write rs2 to memory
     }
 }
+
+
+// Write back to register file
+// This function writes the result back to the register file
 
 void WriteBack() {
     if (RegWrite && rd != 0) { // x0 is hardwired to 0
@@ -207,6 +225,10 @@ void WriteBack() {
     printf("pc is modified to 0x%x\n\n", pc);
 }
 
+
+// Update the program counter
+// This function updates the program counter based on branch control and zero flag
+
 void UpdatePC() {
     // Update PC based on branch control and zero flag
     if (Branch && alu_zero) {
@@ -215,6 +237,10 @@ void UpdatePC() {
         pc = next_pc;
     }
 }
+
+
+// Load instructions from a file
+// This function loads instructions from a file into instruction memory
 
 void load_instructions(const char *filename) {
     FILE *file = fopen(filename, "r");
@@ -235,6 +261,10 @@ void load_instructions(const char *filename) {
     fclose(file);
 }
 
+
+// Initialize memory and registers
+// This function initializes the register file and data memory to zero
+
 void initialize_memory() {
     // Initialize all registers and memory to zero
     for (int i = 0; i < 32; i++) {
@@ -253,6 +283,8 @@ void initialize_memory() {
     d_mem[29] = 0x10; // 0x74 / 4 = 29
 }
 
+
+// Main function
 int main() {
     char filename[100];
     
